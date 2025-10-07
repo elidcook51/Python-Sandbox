@@ -14,15 +14,16 @@ def findMatchingCell(row, column, output):
     p2 = output.loc[newRow, newCol]
     return p1, p2, newRow, newCol
 
-fileName = "C:/Users/ucg8nb\Downloads\Cost Splittly V2 - Sheet1.csv"
+fileName = "C:/Users/ucg8nb/Downloads/Cost Splitty Boone - Sheet1.csv"
 data = pd.read_csv(fileName)
-people = ['Eli Cook', 'Aaron Falik', 'Aidan Szilagyi', 'Beall Roberts', 'Chase Cartwright', 'Dana Johannsen',
+people = ['Name', 'Eli Cook', 'Aaron Falik', 'Aidan Szilagyi', 'Beall Roberts', 'Chase Cartwright', 'Dana Johannsen',
           'Declan McQuinn', 'Ella Harris', 'Hayley Sandler', 'Jackie Janicki', 'Jenny Macler', 'Jesse Smith',
           'Kamren Reeves', 'Lisa de Groot', 'Mitchell Palmer', 'Tyler Jackson', 'Will Taylor']
+data['Cost'] = data['Cost'].astype('float')
 data_ = []
 for person in people:
     if person != 'Name':
-        temp = [person, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0,0]
+        temp = [person, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0,0]
         data_.append(temp)
 output = pd.DataFrame(data_, columns = people)
 for row in range(len(data)):
@@ -57,4 +58,4 @@ for payer in range(len(output)):
             elif p1 == p2:
                 output.loc[newRow, newCol] = 0
                 output.loc[payer, paid] = 0
-output.to_csv('C:/Users/ucg8nb\Downloads/finalResult.csv', encoding = 'utf-8', index = False)
+output.to_csv('C:/Users/ucg8nb/Downloads/finalResult Boone.csv', encoding = 'utf-8', index = False)
