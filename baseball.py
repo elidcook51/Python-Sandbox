@@ -255,15 +255,32 @@ class TeamDrafts:
 teamData = pd.read_excel("C:/Users/ucg8nb/Downloads/baseball_data.xlsx", sheet_name = 'team.data')
 playerData = pd.read_excel("C:/Users/ucg8nb/Downloads/baseball_data.xlsx", sheet_name = 'player.data')
 
-teamDrafter = TeamDrafts(10, playerData, teamData)
-teamDrafter.setUp()
+# teamDrafter = TeamDrafts(10, playerData, teamData)
+# teamDrafter.setUp()
 
-for i in range(40):
-    bestPlayer = teamDrafter.getBestPlayer()
-    teamDrafter.draft(int(bestPlayer))
-print(teamDrafter)
-teamDrafter.scoreTeams()
+# for i in range(40):
+#     bestPlayer = teamDrafter.getBestPlayer()
+#     teamDrafter.draft(int(bestPlayer))
+# print(teamDrafter)
+# teamDrafter.scoreTeams()
 
+X = teamData.drop(columns = ['team', 'team_num', 'Win', 'RBI'])
+
+y = teamData['Win']
+
+forwardModel = forwardStepRegression(X, y).fit()
+
+print(forwardModel.summary())
+
+# rbi = teamData['RBI']
+# rbiX = teamData.drop(columns = ['team', 'team_num', 'ERA', 'Win', 'RBI', 'TB', 'SLG', 'OBP'])
+
+# rbiModel = forwardStepRegression(rbiX, rbi).fit()
+
+# print(rbiModel.summary())
+
+# rbiCoef = forwardModel.params['RBI']
+# opsCoef = rbiModel.params['OPS']
 
 
 
