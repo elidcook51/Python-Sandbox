@@ -101,6 +101,18 @@ class TeamDrafts:
         return self.playerData.loc[self.playerData['Player #'] == playerNumber]['OPS'].values[0]
 
     def draft(self, playerNumber):
+        if playerNumber == -1:
+            if self.forward:
+                self.curPlace += 1
+                if self.curPlace == len(self.teamList):
+                    self.forward = False
+                    self.curPlace -= 1
+            else:
+                self.curPlace -= 1
+                if self.curPlace < 0:
+                    self.forward = True
+                    self.curPlace = 0
+            return None
         worked = self.teamList[self.curPlace].pickPlayer(int(playerNumber), self.getPlayerSalary(playerNumber), self.getPlayerOPS(playerNumber))
         if worked != 'Improper Draft':
             if self.forward:
@@ -185,6 +197,9 @@ class TeamDrafts:
         teamOptions.sort_values(['Average OPS'], inplace = True, ignore_index = True, ascending = False)
         teamOptions.head(2000 - 30 * len(self.draftedPlayersList))
 
+        if len(teamOptions) == 0:
+            return None
+
         bestOPS = teamOptions['Average OPS'].values[0]
 
         teamOptions['Rank'] = range(1, len(teamOptions) + 1)
@@ -255,22 +270,73 @@ class TeamDrafts:
 teamData = pd.read_excel("C:/Users/ucg8nb/Downloads/baseball_data.xlsx", sheet_name = 'team.data')
 playerData = pd.read_excel("C:/Users/ucg8nb/Downloads/baseball_data.xlsx", sheet_name = 'player.data')
 
-# teamDrafter = TeamDrafts(10, playerData, teamData)
+teamDrafter = TeamDrafts(10, playerData, teamData)
 # teamDrafter.setUp()
 
-# for i in range(40):
-#     bestPlayer = teamDrafter.getBestPlayer()
-#     teamDrafter.draft(int(bestPlayer))
+#First 10
+teamDrafter.draft(14)
+teamDrafter.draft(41)
+teamDrafter.draft(13)
+teamDrafter.draft(24)
+teamDrafter.draft(31)
+teamDrafter.draft(37)
+teamDrafter.draft(4)
+teamDrafter.draft(26)
+teamDrafter.draft(18)
+teamDrafter.draft(49)
+
+#Second 10 starting at team 10
+teamDrafter.draft(46)
+teamDrafter.draft(42)
+teamDrafter.draft(19)
+teamDrafter.draft(2)
+teamDrafter.draft(16)
+teamDrafter.draft(1)
+teamDrafter.draft(40)
+teamDrafter.draft(9)
+teamDrafter.draft(28)
+teamDrafter.draft(25)
+
 # print(teamDrafter)
 # teamDrafter.scoreTeams()
 
-X = teamData.drop(columns = ['team', 'team_num', 'Win', 'RBI'])
+#Third 10 starting at 1
+teamDrafter.draft(17)
+teamDrafter.draft(48)
+teamDrafter.draft(34)
+teamDrafter.draft(32)
+teamDrafter.draft(22)
+teamDrafter.draft(21)
+teamDrafter.draft(6)
+teamDrafter.draft(29)
+teamDrafter.draft(7)
+teamDrafter.draft(27)
+# teamDrafter.scoreTeams()
 
-y = teamData['Win']
+#Fourth 10 starting at 10
+teamDrafter.draft(38)
+teamDrafter.draft(11)
+teamDrafter.draft(23)
+teamDrafter.draft(45)
+teamDrafter.draft(43)
+teamDrafter.draft(8)
+teamDrafter.draft(39)
+teamDrafter.draft(30)
+teamDrafter.draft(15)
+teamDrafter.draft(44)
 
-forwardModel = forwardStepRegression(X, y).fit()
+print(teamDrafter)
 
-print(forwardModel.summary())
+teamDrafter.scoreTeams()
+# teamDrafter.getBestPlayer()
+
+# X = teamData.drop(columns = ['team', 'team_num', 'Win', 'RBI'])
+
+# y = teamData['Win']
+
+# forwardModel = forwardStepRegression(X, y).fit()
+
+# print(forwardModel.summary())
 
 # rbi = teamData['RBI']
 # rbiX = teamData.drop(columns = ['team', 'team_num', 'ERA', 'Win', 'RBI', 'TB', 'SLG', 'OBP'])
