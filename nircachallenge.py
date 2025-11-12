@@ -58,18 +58,19 @@ commonName = pd.read_csv("C:/Users/ucg8nb/Downloads/challengeSignups.csv")
 lastNames = commonName['Last Name'].tolist()
 firstNames = commonName['First Name'].tolist()
 
-open6kresultsLink = "C:/Users/ucg8nb/Downloads/2024 results export.xlsx"
+# open6kresultsLink = "C:/Users/ucg8nb/Downloads/2024 results export.xlsx"
 
-results6k = pd.read_excel(open6kresultsLink)
+# results6k = pd.read_excel(open6kresultsLink)
 
-challenge6kResults = results6k[results6k['Last Name'].isin(lastNames)]
-challenge6kResults = challenge6kResults[challenge6kResults['First Name'].isin(firstNames)]
+# challenge6kResults = results6k[results6k['Last Name'].isin(lastNames)]
+# challenge6kResults = challenge6kResults[challenge6kResults['First Name'].isin(firstNames)]
 
 collegeResultLink = "C:/Users/ucg8nb/Downloads/2025 results excel.xlsx"
 
 resultsCollege = pd.read_excel(collegeResultLink)
 resultsCollege['First Name'] = resultsCollege['First Name'].str.lower()
 resultsCollege['Last Name'] = resultsCollege['Last Name'].str.lower()
+
 
 challengeResultsCollege = resultsCollege[resultsCollege['Last Name'].isin(lastNames)]
 challengeResultsCollege = challengeResultsCollege[challengeResultsCollege['First Name'].isin(firstNames)]
