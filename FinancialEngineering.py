@@ -1,7 +1,15 @@
 import numpy as np
 from scipy.stats import norm
 import pandas as pd
-
+import re
+import json
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime, timezone
+import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
+import statsmodels.api as sm
+from functools import reduce
 
 def printInLatexTable(listOfLists, colNames):
     print("\\begin{table}[h]")
@@ -42,177 +50,243 @@ def blackscholes(S, K, r, T, sigma):
     output = S * Nd1 - K * np.exp(-1 * r * T) * Nd2
     return output
 
-sigmas = np.arange(0,1,0.000001)
-S = 125
-K = 120
-r = 0.05
-T = 63/252
-C = 15.2043
-sigma = 0.481911
+llmsheet = "C:/Users/ucg8nb/Downloads/LLM Stock Prices.xlsx"
+llmCols = ['Meta', "NVIDIA", 'Palantir']
+bigDf = pd.read_excel("C:/Users/ucg8nb/Downloads/LLM Stock Information.xlsx")
 
-# specD1 = d1(S, K, r, T, sigma)
-# print(specD1)
-# print(norm.cdf(specD1))
+mask = (bigDf['Date'] >= '2021-01-01')
+bigDf = bigDf.loc[mask]
 
-# print(blackscholes(S, K, r, T, 0.4))
-ABCprice = pd.read_excel("C:/Users/ucg8nb/Downloads/ABC.xlsx")
-ABC = ABCprice['ABC'].tolist()
-ts = ABCprice['t'].tolist()
-Tvals = [(63 - t) / 252 for t in ts]
-d1s = [d1(stock, K, r, t, sigma) for stock, t in zip(ABC, Tvals)]
-delta = [norm.cdf(d1) for d1 in d1s]
-callprice = [blackscholes(stock, K, r, t, sigma) for stock, t in zip(ABC, Tvals)]
-putprice = [call + K / (1 + r) - stock for (call, stock) in zip(callprice, ABC)]
-stockAmount = [delt - 1 for delt in delta]
-stockPortfolio = [quantity * stock for (quantity, stock) in zip(stockAmount, ABC)]
-portVal = [putprice[0]]
-bondPort = [portVal[0] - stockPortfolio[0]]
-for i in range(1,len(stockPortfolio)):
-    stock = ABC[i]
-    prevStock = ABC[i - 1]
-    stockPort = stockPortfolio[i-1]
-    newStockVal = stockPort * (stock / prevStock)
-    newbondPort = bondPort[i-1] * (1 + r/63)
-    portVal.append(newStockVal + newbondPort)
-    bondPort.append(portVal[i] - stockPortfolio[i])
-gains = [val - putprice[0] for val in portVal]
+for c in llmCols:
+    plt.scatter(bigDf[c + ' Earnings'], bigDf[c + ' Price'], label = c)
+plt.plot([0,0], [0,800], linestyle = '--')
+plt.ylim(0,800)
+plt.title('Stock Price vs. Earnings per Share')
+plt.xlabel("Earnings per Share")
+plt.ylabel("Stock Price")
+plt.legend()
+plt.savefig('C:/Users/ucg8nb/Downloads/Price v earning new.png')
+plt.clf()
+
+metaStock = pd.read_excel(llmsheet, sheet_name = "Meta")
+NVIDIAStock = pd.read_excel(llmsheet, sheet_name= 'NVIDIA')
+palantirStock = pd.read_excel(llmsheet, sheet_name= "Palantir")
+
+metaStock['Date'] = pd.to_datetime(metaStock['Date'])
+NVIDIAStock['Date'] = pd.to_datetime(NVIDIAStock['Date'])
+palantirStock['Date'] = pd.to_datetime(palantirStock['Date'])
+
+dfs = [metaStock, NVIDIAStock, palantirStock]
+stockDf = reduce(lambda left, right: pd.merge(left, right, how = 'outer', on = 'Date'), dfs)
+
+stockDf[[c + ' Price' for c in llmCols]].plot(ax = plt.gca())
+plt.title("Price of AI companies over time")
+plt.xlabel("Date")
+plt.ylabel("Stock Price")
+plt.savefig('C:/Users/ucg8nb/Downloads/AI Stock Price.png')
+
+# metaEarnings = pd.read_excel(llmsheet, sheet_name='Meta Earnings')
+# NVIDIAEarnings = pd.read_excel(llmsheet, sheet_name= 'NVIDIA Earnings')
+# palantirEarnings = pd.read_excel(llmsheet, sheet_name= 'Palantir Earnings')
+
+# metaStock['Date'] = pd.to_datetime(metaStock['Date'])
+# metaStock = metaStock.set_index('Date')['Meta Price']
+# metaStock = metaStock.groupby(pd.Grouper(freq = 'QE')).mean()
+
+# NVIDIAStock['Date'] = pd.to_datetime(NVIDIAStock['Date'])
+# NVIDIAStock = NVIDIAStock.set_index('Date')['NVIDIA Price']
+# NVIDIAStock = NVIDIAStock.groupby(pd.Grouper(freq = 'QE')).mean()
+
+# palantirStock['Date'] = pd.to_datetime(palantirStock['Date'])
+# palantirStock = palantirStock.set_index('Date')['Palantir Price']
+# palantirStock = palantirStock.groupby(pd.Grouper(freq = 'QE')).mean()
+
+# renameCols = {'Fiscal Quarter End': 'Date'}
+# metaEarnings = metaEarnings.rename(columns = renameCols)
+# NVIDIAEarnings = NVIDIAEarnings.rename(columns=renameCols)
+# palantirEarnings = palantirEarnings.rename(columns=renameCols)
+
+# dfs = [metaStock, NVIDIAStock, palantirStock, metaEarnings, NVIDIAEarnings, palantirEarnings]
+
+# bigDf = reduce(lambda left, right: pd.merge(left, right, on = "Date", how = 'outer'), dfs)
+# bigDf.to_excel('C:/Users/ucg8nb/Downloads/LLM Stock Information.xlsx')
+
+# stockDf = pd.read_excel("C:/Users/ucg8nb/Downloads/Stock Prices.xlsx")
+# earningsDf = pd.read_excel("C:/Users/ucg8nb/Downloads/Stock Prices.xlsx", sheet_name = 'Earnings')
+# yahooEngageDf = pd.read_excel("C:/Users/ucg8nb/Downloads/Stock Prices.xlsx", sheet_name = 'Website Views')
+# amazonEngageDf = pd.read_excel("C:/Users/ucg8nb/Downloads/Stock Prices.xlsx", sheet_name = 'Customer Accounts')
+
+# stockMask = (stockDf['month'] >= '1998-01-01') & (stockDf['month'] <= '2003-01-01')
+# stockDf = stockDf.loc[stockMask]
+# earningsMask = (earningsDf['Year'] >= 1998) & (earningsDf['Year'] <= 2003)
+# earningsDf = earningsDf.loc[earningsMask]
+# stockCols = ['Cisco', 'Amazon', 'Yahoo', 'Pets']
+
+# stockDf['month'] = pd.to_datetime(stockDf['month'])
+# stockDf['Year'] = stockDf['month'].dt.year
+
+# earningsDf['Year'] = pd.to_datetime(earningsDf['Year'])
+
+# stockRenames = {}
+# earningRenames = {}
+# for c in stockCols:
+#     stockRenames[c] = c + ' Price'
+#     earningRenames[c] = c + ' Earnings'
+# stockDf = stockDf.rename(columns = stockRenames)
+# earningsDf = earningsDf.rename(columns = earningRenames)
+
+# stockDf = stockDf[['Year'] + [c + " Price" for c in stockCols]]
+# earningsDf = earningsDf[['Year'] + [c + " Earnings" for c in stockCols]]
+
+# stockDf = stockDf.groupby('Year', as_index = False)[[c + " Price" for c in stockCols]].mean()
+# stockDf['Year'] = pd.to_datetime(stockDf['Year'])
+
+# bigDf = pd.merge(stockDf, earningsDf, how = 'outer', on = 'Year')
+
+# for c in stockCols:
+#     tempDf = bigDf[[c + ' Earnings', c + ' Price']].dropna()
+#     if len(tempDf) > 1:
+#         x = tempDf[c + ' Earnings']
+#         y = tempDf[c + ' Price']
+#         x = sm.add_constant(x)
+#         result = sm.OLS(y, x).fit()
+#         print(f"Results for {c}:")
+#         print(result.summary())
+
+# for c in stockCols:
+#     plt.scatter(bigDf[c + " Earnings"], bigDf[c + ' Price'], label = c)
+
+# plt.plot([0,0], [0,60], linestyle = '--')
+# plt.ylim(0, 60)
+# plt.legend()
+# plt.title("Stock Price vs. Earnings for each year for companies")
+# plt.xlabel("Earnings in $")
+# plt.ylabel("Stock Price in $")
+# plt.savefig('C:/Users/ucg8nb/Downloads/Price v earning old.png')
+
+# fig, ax = plt.subplots(1,2)
+
+# yahooEngageDf.set_index('Date')['Yahoo'].plot(ax = ax[0])
+# amazonEngageDf.set_index('Year')['Amazon'].plot(ax = ax[1])
+# fig.suptitle("User Engagement for Amazon and Yahoo")
+# quarters = yahooEngageDf['Date'].tolist()
+
+# ax[0].set_xlabel('Quarter')
+# ax[0].set_ylabel('Website Views')
+# ax[0].set_title('Yahoo')
+
+# fmt = ScalarFormatter(useMathText=True)
+# fmt.set_powerlimits((6, 6))        # fix the order of magnitude to 10^6
+# ax[0].yaxis.set_major_formatter(fmt)
+# ax[0].ticklabel_format(style='sci', axis='y', scilimits=(6, 6))  # same effect via helper
+# ax[1].yaxis.set_major_formatter(fmt)
+# ax[1].ticklabel_format(style = 'sci', axis = 'y', scilimits = (6,6))
+
+# step =2
+# tick_pos = list(range(0, len(yahooEngageDf), step))
+# ax[0].set_xticks(tick_pos)
+# ax[0].set_xticklabels([quarters[i] for i in tick_pos], rotation = 30)
+
+# ax[1].set_xlabel("Year")
+# ax[1].set_ylabel("Customer Accounts")
+# ax[1].set_title("Amazon")
+
+# fig.tight_layout()
+# fig.savefig("C:/Users/ucg8nb/Downloads/Tester Engagement.png")
+
+# stockDf['month'] = pd.to_datetime(stockDf['month'])
+
+# mask = (stockDf['month'] >= '1998-01-01') & (stockDf['month'] <= '2003-01-01')
+# bubbleDf = stockDf.loc[mask].sort_values('month')
+
+# stockCols = ['Cisco', 'Amazon', 'Yahoo', 'Pets']
+# normalizedStocks = bubbleDf.copy()
+# max_per_stock = normalizedStocks[stockCols].max()
+# normalizedStocks[stockCols] = normalizedStocks[stockCols] / max_per_stock
+
+# normalizedStocks.set_index('month')[stockCols].plot(ax = plt.gca())
 
 
-newSheet = pd.DataFrame()
-newSheet['t'] = ts
-newSheet['ABC'] = ABC
-newSheet['Delta'] = delta
-newSheet['Call Price'] = callprice
-newSheet['Put Price'] = putprice
-newSheet['Stock Portfolio'] = stockPortfolio
-newSheet['Bond Portfolio'] = bondPort
-newSheet['Portfolio Value'] = portVal
-newSheet['Gain/Loses'] = gains
-
-newSheet.to_csv("C:/Users/ucg8nb/Downloads/HW3 - Class Problem.csv")
+# plt.title('Stock Prices by Company from 1998 to 2003')
+# plt.xlabel("Date")
+# plt.ylabel("Normalized Stock Price")
+# plt.savefig('C:/Users/ucg8nb/Downloads/Stock Price Chart.png')
 
 
+# yahooDf = pd.read_csv("C:/Users/ucg8nb/Downloads/Yahoo stock price.csv")
+# petsDf = pd.read_csv("C:/Users/ucg8nb/Downloads/Pets dot com stock price.csv")
+# ciscoDf = pd.read_excel("C:/Users/ucg8nb/Downloads/Stock Prices Cisco and Amazon.xlsx", sheet_name = 'Cisco')
+# amazonDf = pd.read_excel("C:/Users/ucg8nb/Downloads/Stock Prices Cisco and Amazon.xlsx", sheet_name = 'Amazon')
 
-# d1s = np.array([d1(S, K, r, T, sigma) for sigma in sigmas])
-# outputs = np.array([blackscholes(S, K, r, T, sigma) for sigma in sigmas])
-# distFromC = np.abs(outputs - C)
-# index = int(np.argmax(distFromC == np.min(distFromC)))
-# print(sigmas[index])
-# print(distFromC[index])
-# print(outputs[index])
-# print(d1s[index])
+# yahooDf['date'] = pd.to_datetime(yahooDf['date'])
+# petsDf['date'] = pd.to_datetime(petsDf['date'])
+# ciscoDf['date'] = pd.to_datetime(ciscoDf['Date'])
+# amazonDf['date'] = pd.to_datetime(amazonDf['Date'])
 
-# print(blackscholes(S, K, r, T, 0.4))
-# call1 = blackscholes(S, K, 0.04, T, sigma)
-# call2 = blackscholes(S, K, 0.05, T, sigma)
-# call3 = blackscholes(S, K, 0.06, T, sigma)
+# ciscoDf = ciscoDf.rename(columns = lambda c: c.strip())
+# amazonDf = amazonDf.rename(columns = lambda c: c.strip())
 
-# rs = [0.04, 0.05, 0.06]
-# calls = [blackscholes(S, K, R, T, sigma) for R in rs]
-# puts = [c + K / (1 + r) - S for c,r in zip(calls, rs)]
-
-# colNames = ['Risk Free Rate ($r$)', 'Call Price', 'Put Price']
-
-# printInLatexTable([rs, calls ,puts], colNames)
-# d1 = (np.log(S/K) + (r + np.power(sigmas, 2) / 2) * T) / (sigmas * np.sqrt(T))
-# d2 = d1 - sigmas * np.sqrt(7)
-# Nd1 = np.array([norm.cdf(x) for x in list(d1)])
-# Nd2 = np.array([norm.cdf(x) for x in list(d2)])
-# output = S * Nd1 - K * np.exp(-1 * r * T) * Nd2
-# distFromC = np.abs(output - C)
-# index = int(np.argmax(distFromC == np.min(distFromC)))
-# print(distFromC[index])
-# print(output[index])
-# print(sigmas[index])
-# print(d1[index])
-# print(Nd1[index])
-# print(np.where(distFromC == np.min(distFromC)))
+# ciscoDf = ciscoDf.rename(columns = {'Adj Close': 'Cisco'})
+# amazonDf = amazonDf.rename(columns = {'Adj Close': 'Amazon'})
+# yahooDf = yahooDf.rename(columns = {'value': 'Yahoo'})
+# petsDf = petsDf.rename(columns = {'value': 'Pets'})
 
 
-# bonusOptions = np.arange(0, 61000, 10000)
-# base = 80000
-# salaryOptions = bonusOptions + base
-# utility = np.power(salaryOptions, 1/4)
-# probs = np.array([1/7] * len(utility))
-# probString = ['1/7'] * len(utility)
+# ciscoDf = (
+#     ciscoDf.assign(month = ciscoDf['date'].dt.to_period('M')).groupby('month', as_index = False)['Cisco'].mean()
+# )
+# amazonDf = (
+#     amazonDf.assign(month = amazonDf['date'].dt.to_period('M')).groupby('month', as_index = False)['Amazon'].mean()
+# )
+# yahooDf = (
+#     yahooDf.assign(month = yahooDf['date'].dt.to_period('M')).groupby('month', as_index = False)['Yahoo'].mean()
+# )
+# petsDf = (
+#     petsDf.assign(month = petsDf['date'].dt.to_period('M')).groupby('month', as_index = False)['Pets'].mean()
+# )
 
-# colNames = ['Bonus Amount', 'Total Salary', 'Utility', 'Probability']
-# printInLatexTable([bonusOptions, salaryOptions, utility, probString], colNames)
+# bigDf = pd.merge(ciscoDf, amazonDf,how ='outer', on = 'month')
+# bigDf = pd.merge(bigDf, yahooDf, how = 'outer', on = 'month')
+# bigDf = pd.merge(bigDf, petsDf, how = 'outer', on = 'month')
 
-# print(np.sum(utility * probs))
-# print(np.sum(utility * probs) ** 4)
+# bigDf.to_csv("C:/Users/ucg8nb/Downloads/Stock Prices.csv")
 
-# termStructure = np.array([0.070, 0.073, 0.077, 0.081, 0.084, 0.088])
 
-# shortRates = [termStructure[0]]
-# for i in range(len(termStructure) - 1):
-#     ind = i + 1
-#     num = np.power(1 + termStructure[ind], ind + 1)
-#     den = np.power(1+ termStructure[i], i + 1)
-#     shortRates.append(num / den - 1)
+# petsurl = 'https://companiesmarketcap.com/pets-dot-com-ipet-holdings/stock-price-history/'
+# amazonurl = 'https://companiesmarketcap.com/amazon/stock-price-history/'
+# yahoourl = 'https://companiesmarketcap.com/yahoo/stock-price-history/'
+# response = requests.get(yahoourl)
+# response.raise_for_status()
 
-# shortRates = np.array(shortRates)
-# principal = 10000000
 
-# floatPayment = shortRates * principal
-# todaysFloatPayment = []
-# for i in range(len(floatPayment)):
-#     curPayment = floatPayment[i]
-#     curRate = termStructure[i]
-#     discountRate = 1 / np.power((1 + curRate), i + 1)
-#     todaysFloatPayment.append(curPayment * discountRate)
+# soup = BeautifulSoup(response.text, 'html.parser')
 
-# years = [1, 2, 3, 4, 5, 6]
+# script_tags = soup.find_all('script')
 
-# colNames = ['Year', 'Short Rate', 'Floating Payment', "Floating Payment today's money"]
-# printInLatexTable([years, shortRates, floatPayment, todaysFloatPayment], colNames)
+# data_list = None
 
-# print(np.sum(todaysFloatPayment))
+# for tag in script_tags:
+#     script = tag.string or tag.get_text()
+    
+#     if script and "data = " in script:
+#         m = re.search(r"data\s*=\s*(\[\s*\{.*?\}\s*\])", script, flags = re.DOTALL)
+#         if m:
+#             json_text = m.group(1)
 
-# A = np.array([
-#     [1.4, 2.0, 1.1],
-#     [1.1, 1.0, 1.1],
-#     [0.9, 0.7, 1.1]
-# ])
+#             data_list = json.loads(json_text)
+#             break
 
-# ss1 = np.array([
-#     [1],
-#     [0],
-#     [0]
-# ])
+# if data_list is None:
+#     raise ValueError("Could not locate 'data = [...]' in any script tag")
 
-# ss2 = np.array([
-#     [0],
-#     [1],
-#     [0]
-# ])
+# records = [
+#     {
+#         "date": datetime.fromtimestamp(item['d'], tz = timezone.utc),
+#         'value': item['v']
+#     }
+#     for item in data_list
+# ]
 
-# ss3 = np.array([
-#     [0],
-#     [0],
-#     [1]
-# ])
+# print(len(records))
 
-# sol1 = np.linalg.inv(A) @ ss1
-# print(sol1)
-
-# u = 1.1052
-# d = 0.9048
-# g=400
-# d = 1 / 1.1
-
-# Ki = [213.81, 211.45, 208.17, 203.58, 197.13, 187.96, 174.79, 155.47, 126.28, 80.00, 0]
-# Knew = [220] * 11
-# xi = [50000]
-# zi = []
-# for i in range(len(Knew) - 1):
-#     K = Knew[i+ 1]
-#     x=  xi[i]
-#     z = (g - d * K) * x / 1000
-#     zi.append(z)
-#     newX = x - z
-#     xi.append(newX)
-# zi.append(0)
-# year = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
-# colNames = ['Year', '$K_{i+1}$', '$x_i$', '$z_i$']
-# printInLatexTable([year,Knew, xi, zi], colNames)
+# pd.DataFrame(records).to_csv("C:/Users/ucg8nb/Downloads/Yahoo stock price.csv")

@@ -119,7 +119,7 @@ def evaluate_label_flips(
     return results
 
 
-def flip_labels(dataset = torchvision.datasets.MNIST, flip_out_labels = [0,1,2,3,4,5,6,7,8,9], flip_in_labels = [0,1,2,3,4,5,6,7,8,9], flip_percentage = 0.0):
+def flip_labels(dataset, flip_out_labels = [0,1,2,3,4,5,6,7,8,9], flip_in_labels = [0,1,2,3,4,5,6,7,8,9], flip_percentage = 0.0):
     if not (0 <= flip_percentage <= 1):
         raise ValueError('flip percentage must be between 0 and 1')
 
@@ -142,18 +142,18 @@ def flip_labels(dataset = torchvision.datasets.MNIST, flip_out_labels = [0,1,2,3
     return dataset, origional_labels.tolist()
 
 def flip_pairs(dataset, pairs, flip_percentage):
-    origionalLabels = dataset.targets.clone()
-    totFlips = int(len(origionalLabels) * flip_percentage)
+    cleanLabels = dataset.targets.clone()
+    totFlips = int(len(cleanLabels) * flip_percentage)
     pairFlips = int(totFlips / len(pairs))
-    pairPercentage =  pairFlips / len(origionalLabels)
+    pairPercentage =  pairFlips / len(cleanLabels)
     for first, second in pairs:
-        dataset, origionalLabels = flip_labels(dataset, [first], [second], pairPercentage)
-    return dataset, origionalLabels
+        dataset, _ = flip_labels(dataset, [first], [second], pairPercentage)
+    return dataset, cleanLabels
 
 mnist = datasets.MNIST(root="./data", train=True, download=True, transform=transforms.ToTensor())
                        
-# newDataset, origionalLabels = flip_labels(mnist, flip_out_labels = [6], flip_in_labels = [7], flip_percentage= 0.25)
-newDataset, origionalLabels = flip_pairs(mnist, [(1,2), (3,4), (5,6)], 0.1)
+newDataset, origionalLabels = flip_labels(mnist, flip_out_labels = [6], flip_in_labels = [7, 8, 9], flip_percentage= 0.25)
+# newDataset, origionalLabels = flip_pairs(mnist, [(1,2), (3,4)], 0.1)
 # print(newDataset.targets[:150])
 # print(origionalLabels[:150])
 
