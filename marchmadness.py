@@ -334,7 +334,9 @@ def get_model_picks(teamProbPicker):
 
             print(f"Running Test {team0} vs {team1}")
             
-            prob = teamProbPicker(team0, team1)
+            prob1 = teamProbPicker(team0, team1)
+            prob0 = teamProbPicker(team1, team0)
+            prob = (prob1 + (1 - prob0)) / 2
 
             seedDiff = seed0 - seed1
 
@@ -449,4 +451,5 @@ nnPredFunc = partial(makePredictionWithNNModel, model = model, preprocessor = pr
 
 print(get_model_picks(nnPredFunc))
 
-# print(makePredictionWithNNModel('Virginia','Tennessee', model, preprocessor, features))
+# print(makePredictionWithNNModel('UMBC','Howard', model, preprocessor, features))
+
