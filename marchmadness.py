@@ -7,6 +7,18 @@ from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve
 import matplotlib.pyplot as plt
 import pickle
 
+import torch
+from torch import nn
+from torch.utils.data import Dataset, DataLoader
+from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
+import math
+import joblib
+import os
+from functools import partial
+
 
 folderPath = "C:/Users/ucg8nb/Downloads/March Madness Predictor/archive"
 teamNameIdCrosswalk = "C:/Users/ucg8nb/Downloads/March Madness Predictor/MTeams.csv"
@@ -15,8 +27,16 @@ tournamentGames = "C:/Users/ucg8nb/Downloads/March Madness Predictor/MNCAATourne
 bigDfPath = "C:/Users/ucg8nb/Downloads/bigDf.csv"
 smallTrainingDataPath = "C:/Users/ucg8nb/Downloads/AllGames.csv"
 bigTrainingDataPath = "C:/Users/ucg8nb/Downloads/BigGamesTrainingSet.csv"
+modelFolderPath = 'C:/Users/ucg8nb/Python Projects/Python-Sandbox/modelStorage'
 
-trainingData = pd.read_csv(smallTrainingDataPath)
+with open('C:/Users/ucg8nb/Python Projects/Python-Sandbox/modelStorage/tournament_model_features.pkl', 'rb') as f:
+    features = pickle.load(f)
+
+trainingData = pd.read_csv(bigTrainingDataPath)
+testingData = pd.read_csv(smallTrainingDataPath)
+
+HIDDEN_DIM = (12,4)
+# torch.manual_seed(4)
 
 def forward_stepwise_logistic_regression(X, y):
     remaining = list(X.columns)
@@ -83,7 +103,7 @@ def testTwoTeams(team0, team1, model):
 
 # ---- HERE IS THE CODE TO ACTUALLY GET THE MODELS -----
 
-def trainModel(trainingData, outputName):
+def trainLogisticModel(trainingData, outputName):
 
     columnsToExclude = ['Team1Season', 'Team1TeamName', 'Team0Season', 'Team0TeamName']
     y_col = 'Winner'
@@ -131,12 +151,170 @@ def trainModel(trainingData, outputName):
     with open(f"{outputName}_features.pkl", 'wb') as f:
         pickle.dump(selected_vars, f)
 
-model = sm.load('tournament_model.sm')
-with open('tournament_model_features.pkl', 'rb') as f:
-    features = pickle.load(f)
+# --- Class for the MLP (NN on tabular data) ---
 
-def get_model_picks(model):
-    startingList = ['Duke', 'Siena', 'Ohio St.', 'TCU', "St. John's", 'Northern Iowa', 'Kansas', 'Cal Baptist', 'Louisville', 'South Florida', 'Michigan St.', 'North Dakota St.', 'UCLA', 'UCF', 'Connecticut', 'Furman', 'Florida', 'Lehigh', 'Clemson', 'Iowa', 'Vanderbilt', 'McNeese', 'Nebraska', 'Troy', 'North Carolina', 'VCU', 'Illinois', 'Penn', "Saint Mary's", 'Texas A&M', 'Houston', 'Idaho', 'Arizona', 'LIU', 'Villanova', 'Utah St.', 'Wisconsin', 'High Point', 'Arkansas', 'Hawaii', 'BYU', 'NC State', 'Gonzaga', 'Kennesaw St.', 'Miami FL', 'Missouri', 'Purdue', 'Queens', 'Michigan', 'UMBC', 'Georgia', 'Saint Louis', 'Texas Tech', 'Akron', 'Alabama', 'Hofstra', 'Tennessee', "SMU", 'Virginia', "Wright St.",'Kentucky', 'Santa Clara', 'Iowa St.', 'Tennessee St.']
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_dim = (128, 64), dropout = 0.1):
+        super().__init__()
+        layers = []
+        prev = input_dim
+        for h in hidden_dim:
+            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
+            prev = h
+        out_dim = 1
+
+        layers += [nn.Linear(prev, out_dim)]
+        self.net = nn.Sequential(*layers)
+    
+    def forward(self, x):
+        return self.net(x)
+    
+# --- Class for the data loader ---
+class TabularDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = X
+        self.y = y
+    
+    def __len__(self):
+        return self.X.shape[0]
+    
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+# Helper method which analyzes how good a model is
+def evaluate(model, loader, criterion = nn.BCEWithLogitsLoss()):
+    model.eval()
+    total_loss = 0.0
+    n = 0
+    correct = 0
+    all_preds = []
+    all_targets = []
+    for xb, yb in loader:
+        logits = model(xb)
+        loss = criterion(logits.squeeze(1), yb)
+        probs = torch.sigmoid(logits.squeeze(1))
+        preds = (probs >= 0.5).float()
+        correct += (preds == yb).sum().item()
+        all_preds.append(probs.cpu())
+        all_targets.append(yb.cpu())
+    
+        total_loss += loss.item() * xb.size(0)
+        n += xb.size(0)
+
+    avg_loss = total_loss / n
+    accuracy = correct / n
+    return {'loss': avg_loss, 'accuracy': accuracy}
+
+
+def trainNNModel(trainingData, testingData, outputName, cols = None, isPCA = False):
+    columnsToExclude = ['Team1Season', 'Team1TeamName', 'Team0Season', 'Team0TeamName']
+    y_col = 'Winner'
+    X_cols = [c for c in trainingData.columns if (c != y_col) & (c not in columnsToExclude)]
+
+    if cols is not None:
+        X_cols = cols
+
+    data_no_nan = trainingData[X_cols + [y_col]].dropna()
+
+    print(f"Removed {len(trainingData) - len(data_no_nan)} rows for having NaN values")
+
+    X_train = data_no_nan[X_cols]
+    y_train = data_no_nan[y_col]
+
+    X_test = testingData[X_cols]
+    y_test = testingData[y_col]
+
+    if isPCA:
+        num_pipeline = Pipeline(
+            steps = [('scalar', StandardScaler()), ('pca', PCA(n_components=0.99))]
+        )
+
+        preprocessor = ColumnTransformer(
+            transformers = [('num', num_pipeline, X_cols)],
+            remainder = 'drop'
+        )
+    else:
+        preprocessor = ColumnTransformer(
+            transformers = [('num', StandardScaler(), X_cols)],
+            remainder= 'drop'
+        )
+    
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=216)
+
+    X_train_proc = preprocessor.fit_transform(X_train)
+    X_test_proc = preprocessor.fit_transform(X_test)
+
+    input_dim = X_train_proc.shape[1]
+
+    y_train_t = torch.tensor(y_train.to_numpy(dtype = np.float32), dtype=torch.float32)
+    y_test_t = torch.tensor(y_test.to_numpy(dtype = np.float32), dtype=torch.float32)
+
+    X_train_t = torch.tensor(X_train_proc, dtype=torch.float32)
+    X_test_t = torch.tensor(X_test_proc, dtype=torch.float32)
+
+    train_ds = TabularDataset(X_train_t, y_train_t)
+    test_ds = TabularDataset(X_test_t, y_test_t)
+
+    batchSize = 128
+    train_loader = DataLoader(train_ds, batch_size=batchSize)
+    test_loader = DataLoader(test_ds, batch_size = batchSize)
+
+    model = MLP(input_dim = input_dim, hidden_dim = HIDDEN_DIM)
+
+    lr = 1e-3
+    weight_decay = 1e-4
+    optimizer = torch.optim.Adam(model.parameters(), lr = lr, weight_decay=weight_decay)
+
+    epochs = 200
+    patience = 25
+    best_val = float('-inf')
+    best_state = None
+    epochs_no_improve = 0
+
+    criterion = nn.BCEWithLogitsLoss()
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        total = 0
+        running = 0.0
+
+        for xb, yb in train_loader:
+            optimizer.zero_grad()
+            logits = model(xb)
+            loss = criterion(logits.squeeze(1), yb)
+            loss.backward()
+            optimizer.step()
+
+            running += loss.item() * xb.size(0)
+            total += xb.size(0)
+
+        train_loss = running/total
+        test_metrics = evaluate(model, test_loader)
+
+        print(f"Epoch{epoch:02d} | train_loss={train_loss:.4f} | test_loss={test_metrics['loss']:.4f} | test_accuracy={test_metrics['accuracy']:.4f}")
+        score_to_minimize = test_metrics['accuracy']
+
+        if score_to_minimize > best_val + 1e-6:
+            best_val = score_to_minimize
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve > patience:
+                print(f"Early Stopping after {epoch} epochs")
+                break
+        
+        
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    
+    torch.save(model.state_dict(), f"{outputName}.pt")
+    joblib.dump(preprocessor, f"{outputName}_preprocessor.joblib")
+
+# model = sm.load('tournament_model.sm')
+
+def get_model_picks(teamProbPicker):
+    startingList = ['Duke', 'Siena', 'Ohio St.', 'TCU', "St. John's", 'Northern Iowa', 'Kansas', 'Cal Baptist', 'Louisville', 'South Florida', 'Michigan St.', 'North Dakota St.', 'UCLA', 'UCF', 'Connecticut', 'Furman', 'Florida', 'Lehigh', 'Clemson', 'Iowa', 'Vanderbilt', 'McNeese', 'Nebraska', 'Troy', 'North Carolina', 'VCU', 'Illinois', 'Penn', "Saint Mary's", 'Texas A&M', 'Houston', 'Idaho', 'Arizona', 'LIU', 'Villanova', 'Utah St.', 'Wisconsin', 'High Point', 'Arkansas', 'Hawaii', 'BYU', 'Texas', 'Gonzaga', 'Kennesaw St.', 'Miami FL', 'Missouri', 'Purdue', 'Queens', 'Michigan', 'UMBC', 'Georgia', 'Saint Louis', 'Texas Tech', 'Akron', 'Alabama', 'Hofstra', 'Tennessee', "SMU", 'Virginia', "Wright St.",'Kentucky', 'Santa Clara', 'Iowa St.', 'Tennessee St.']
     seedDict = {}
     seedOrder = [1, 16, 8, 9, 5, 12, 4, 13, 6, 11, 3, 14, 7, 10, 2, 15]
     for i in range(len(startingList)):
@@ -156,24 +334,20 @@ def get_model_picks(model):
 
             print(f"Running Test {team0} vs {team1}")
             
-            prob = testTwoTeams(team0, team1, model)
+            prob = teamProbPicker(team0, team1)
 
             seedDiff = seed0 - seed1
 
-            threshold = 0.5 + 0.033 * seedDiff
+            threshold = 0.5 + 0.032 * seedDiff
             if prob > threshold:
                 winner = team1
             else:
                 winner = team0
-            outputString += f"{team0} {seed0} vs. {team1} {seed1}: Pick {winner} with probability {prob} \n"
+                prob = 1 - prob
+            outputString += f"{team0} {seed0} vs. {team1} {seed1}: Pick {winner} with probability {prob * 100:.2f}% \n"
             nextList.append(winner)
         curList = nextList
     return outputString
-
-
-print(testTwoTeams('Iowa St.', 'Virginia', model))
-print(get_model_picks(model))
-
 
 
 # ---- HERE IS THE CODE TO CREATE THE TRAINING DATA ---
@@ -227,3 +401,52 @@ print(get_model_picks(model))
 # bigDf.to_csv(bigDfPath)
 
 
+
+
+# --- All of the NN testing ---
+def getNNModelOut(modelPath, preprocessorPath, X_cols):
+    preprocessor = joblib.load(preprocessorPath)
+    input_dim = len(X_cols)
+    model = MLP(input_dim=input_dim, hidden_dim = HIDDEN_DIM)
+    state_dict = torch.load(modelPath, map_location = "cpu")
+    model.load_state_dict(state_dict)
+    return model, preprocessor
+
+def makePredictionWithNNModel(team0, team1, model, preprocessor, X_cols):
+    model.eval()
+
+    currentData = pd.read_csv(bigDfPath)
+    currentData = currentData[currentData['Season'] == 2026]
+
+    team0df = currentData[currentData['TeamName'] == team0]
+    team1df = currentData[currentData['TeamName'] == team1]
+
+    team0df = team0df.iloc[[0]].reset_index(drop = True)
+    team1df = team1df.iloc[[0]].reset_index(drop = True)
+    team0df = team0df.add_prefix('Team0')
+    team1df = team1df.add_prefix('Team1')
+
+    newDf = pd.concat([team0df, team1df], axis = 1)
+
+    X = newDf[X_cols]
+
+    X_proc = preprocessor.transform(X)
+    X_t = torch.tensor(X_proc, dtype = torch.float32)
+
+    logits = model(X_t)
+    probs = torch.sigmoid(logits.squeeze(1))
+
+    return probs.item()
+
+# trainNNModel(trainingData, testingData, os.path.join(modelFolderPath, 'properTesting'), cols = features)
+
+modelPath = 'C:/Users/ucg8nb/Python Projects/Python-Sandbox/modelStorage/properTesting.pt'
+preprocessorPath = 'C:/Users/ucg8nb/Python Projects/Python-Sandbox/modelStorage/properTesting_preprocessor.joblib'
+
+model, preprocessor = getNNModelOut(modelPath, preprocessorPath, X_cols = features)
+
+nnPredFunc = partial(makePredictionWithNNModel, model = model, preprocessor = preprocessor, X_cols = features)
+
+print(get_model_picks(nnPredFunc))
+
+# print(makePredictionWithNNModel('Virginia','Tennessee', model, preprocessor, features))

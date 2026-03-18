@@ -5,3 +5,6 @@ data
 site_status
 *.sm
 *.pkl
+*.pt
+*.joblib
+modelStorage
