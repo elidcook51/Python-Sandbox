@@ -449,7 +449,7 @@ model, preprocessor = getNNModelOut(modelPath, preprocessorPath, X_cols = featur
 
 nnPredFunc = partial(makePredictionWithNNModel, model = model, preprocessor = preprocessor, X_cols = features)
 
-print(get_model_picks(nnPredFunc))
+# print(get_model_picks(nnPredFunc))
 
-# print(makePredictionWithNNModel('UMBC','Howard', model, preprocessor, features))
+print(makePredictionWithNNModel('Lehigh','Prairie View A&M', model, preprocessor, features))
 
