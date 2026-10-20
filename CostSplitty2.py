@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 
-initialPath = "C:/Users/ucg8nb/Downloads/Cost Splitty Spring Break 2026 (Responses) - Form Responses 1.csv"
-transformPath = "C:/Users/ucg8nb/Downloads/Transformed Cost Splitty.csv"
-outputPath = "C:/Users/ucg8nb/Downloads/Final Output.csv"
+initialPath = "C:/Users/ucg8nb/Downloads/Cost Splitty Lodge Days (Responses) - Form Responses 1.csv"
+transformPath = "C:/Users/ucg8nb/Downloads/Lodge Days Transformed Splitty.csv"
+outputPath = "C:/Users/ucg8nb/Downloads/Final Output Lodge Days.csv"
 
 
 def getPeopleList(df):
@@ -72,11 +72,13 @@ def computeCosts(transformedDf, peopleList):
         
 
 initialDf = pd.read_csv(initialPath)
-# transformDf = transformFormResponse(initialDf)
-# transformDf.to_csv(transformPath)
-# outputDf = computeCosts(transformDf, getPeopleList(initialDf))
-# outputDf.to_csv(outputPath)
+noAlch = initialDf[initialDf['Alcohol'] != 1]
 
-transformDf = pd.read_csv("C:/Users/ucg8nb/Downloads/Transformed Cost Splitty - Transformed Cost Splitty.csv")
+transformDf = transformFormResponse(noAlch)
+transformDf.to_csv(transformPath)
 outputDf = computeCosts(transformDf, getPeopleList(initialDf))
 outputDf.to_csv(outputPath)
+
+# transformDf = pd.read_csv("C:/Users/ucg8nb/Downloads/Transformed Cost Splitty - Transformed Cost Splitty.csv")
+# outputDf = computeCosts(transformDf, getPeopleList(initialDf))
+# outputDf.to_csv(outputPath)
