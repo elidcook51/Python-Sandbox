@@ -33,14 +33,14 @@ MAX_CATEGORIES = 6  # questions with more distinct answers get agree-only
 COMPACT_FEATURES = True  # categoricals get agree-only (no one-hots); best for small n
 N_TOP_FEATURES = 20
 
-# Dealbreaker columns for religion / political identity. None = auto-detect
-# by keywords (what it found is printed every run); set the exact header
-# string here if auto-detect picks the wrong column.
-RELIGION_SELF = None    # e.g. "What is your religious identity?"
-RELIGION_CARE = None    # e.g. "Do you care about a partner's religious identity?"
-RELIGION_AVOID = None   # e.g. "Which religions would you not want in a partner?"
-POLITICS_SELF = None
-POLITICS_CARE = None
+# Dealbreaker columns for religion / political identity. Set explicitly below
+# (verified against the user's actual headers 2026-10-19); set to None to
+# fall back to auto-detect by keywords (what it found is printed every run).
+RELIGION_SELF = "What religious identity"
+RELIGION_CARE = "Do you care about your partners religious identity"
+RELIGION_AVOID = "What religious identity do you not want to be with?"
+POLITICS_SELF = "Political Identity"
+POLITICS_CARE = "Do you care about your partners political identity"
 POLITICS_AVOID = "What political identity do you not want to be with"
 
 
@@ -60,7 +60,8 @@ def find_col(cols, *keywords):
 
 
 def short(text, n=28):
-    return re.sub(r"\W+", "_", str(text).strip().lower()).strip("_")[:n]
+    s = re.sub(r"\W+", "_", str(text).strip().lower()).strip("_")
+    return s[:n].rstrip("_")
 
 
 def is_likert(series):
@@ -214,13 +215,68 @@ def build_dataset(verbose=True):
     try:
         guesses = pd.read_csv(GUESSES_CSV, encoding="utf-8-sig")
         for _, r in guesses.iterrows():
-            if str(r.get("best_guess", "")).strip():
-                overrides[normalize(r["raw_name"])] = normalize(r["best_guess"])
+            bg = r.get("best_guess")
+            # empty best_guess reads back as NaN; str(NaN)="nan" is truthy,
+            # so it must be excluded explicitly or it poisons the lookup
+            if bg is not None and not pd.isna(bg) and str(bg).strip():
+                overrides[normalize(r["raw_name"])] = normalize(bg)
     except FileNotFoundError:
         pass
 
+    # First-name fallback: matches.csv often uses first names only, and first
+    # names are unique in this data. Mirrors the loosened rules in
+    # marriage_pact_name_match.py (kept local so this script runs standalone).
+    NICKNAMES = {
+        "mike": "michael", "liz": "elizabeth", "beth": "elizabeth",
+        "bill": "william", "jim": "james", "bob": "robert",
+        "dave": "david", "kate": "katherine", "dick": "richard",
+        "peggy": "margaret", "sally": "sarah", "chuck": "charles",
+        "hank": "henry", "ned": "edward", "ted": "theodore",
+    }
+    FIRST_NAME_FLOOR = 0.70
+
+    def first_name_score(fa, fb):
+        if fa == fb:
+            return 0.95
+        if NICKNAMES.get(fa) == fb or NICKNAMES.get(fb) == fa:
+            return 0.90
+        if (len(fa) >= 3 and len(fb) >= 3
+                and (fa.startswith(fb) or fb.startswith(fa))):
+            return 0.90
+        r = difflib.SequenceMatcher(None, fa, fb).ratio()
+        return r if r >= 0.60 else 0.0
+
+    people_by_first = {}
+    for norm_name in people:
+        tok = norm_name.split()
+        if tok:
+            people_by_first.setdefault(tok[0], []).append(norm_name)
+
+    _lookup_cache = {}
+    first_name_resolutions = []
+
     def lookup(raw):
-        return people.get(overrides.get(normalize(raw), normalize(raw)))
+        name = normalize(raw)
+        if name in _lookup_cache:
+            return _lookup_cache[name]
+        target = overrides.get(name, name)
+        result = people.get(target)
+        if result is None and target == name:
+            toks = name.split()
+            if toks:
+                f = toks[0]
+                cands = []
+                for pf, fulls in people_by_first.items():
+                    s = first_name_score(f, pf)
+                    if s >= FIRST_NAME_FLOOR:
+                        cands.extend((full, s) for full in fulls)
+                cands.sort(key=lambda t: -t[1])
+                if cands and (len(cands) == 1 or cands[0][1] > cands[1][1]):
+                    full, s = cands[0]
+                    first_name_resolutions.append((str(raw), full, s))
+                    result = people[full]
+        _lookup_cache[name] = result
+        return result
 
     kinds = {q: ("likert" if is_likert(answers[q]) else "categorical")
              for q in questions}
@@ -261,7 +317,7 @@ def build_dataset(verbose=True):
         feats.update(dealbreaker_features(ra, rb, db_cols))
         return feats
 
-    X_rows, y, skipped_names, bad_targets = [], [], [], 0
+    X_rows, y, skipped_names, bad_targets, pair_info = [], [], [], 0, []
     for _, m in matches.iterrows():
         raw_a, raw_b = m[your_col], m[their_col]
         ra, rb = lookup(raw_a), lookup(raw_b)
@@ -273,19 +329,35 @@ def build_dataset(verbose=True):
         try:
             target = float(str(m[target_col]).replace("%", "").strip())
         except ValueError:
+            target = float("nan")
+        if pd.isna(target):  # covers "N/A"/blank cells, which pandas reads as NaN
             bad_targets += 1
             continue
         X_rows.append(pair_features(ra, rb))
         y.append(target)
+        pair_info.append({"name_a": str(raw_a), "name_b": str(raw_b),
+                          "a": ra, "b": rb})
 
     X = pd.DataFrame(X_rows).fillna(0)
     y = pd.Series(y)
     if verbose:
-        print(f"pairs used: {len(y)} (skipped {len(skipped_names)} name lookups"
-              f"{f', {bad_targets} bad targets' if bad_targets else ''}), "
+        dropped_names = len(matches) - len(y) - bad_targets
+        print(f"matches.csv rows: {len(matches)} -> pairs used: {len(y)} "
+              f"(dropped {len(matches) - len(y)}: {dropped_names} unresolved "
+              f"name lookups, {bad_targets} bad percents), "
               f"features: {X.shape[1]}")
         for n, c in Counter(skipped_names).most_common(10):
             print(f"  no answers row for: {n!r} (x{c})")
+        if skipped_names:
+            print("  (run marriage_pact_name_match.py and approve/fill "
+                  "name_guesses.csv to resolve these)")
+        seen_res = {}
+        for raw, full, s in first_name_resolutions:
+            seen_res.setdefault(raw, (full, s))
+        if seen_res:
+            print(f"resolved {len(seen_res)} name(s) by first name:")
+            for raw, (full, s) in sorted(seen_res.items()):
+                print(f"  {raw!r} -> {full!r} ({s:.2f})")
         for prefix in ("religion", "politics"):
             vcols = [c for c in X.columns
                      if c.startswith(prefix + "__") and "violates" in c]
@@ -299,11 +371,11 @@ def build_dataset(verbose=True):
         qlabels["religion"] = "Religion (identity + dealbreakers)"
     if any(db_cols["politics"]):
         qlabels["politics"] = "Political identity (dealbreakers)"
-    return X, y, questions, kinds, qlabels
+    return X, y, questions, kinds, qlabels, pair_info
 
 
 def main():
-    X, y, questions, kinds, qlabels = build_dataset(verbose=True)
+    X, y, questions, kinds, qlabels, _pair_info = build_dataset(verbose=True)
 
     models = {
         "mean_baseline": DummyRegressor(strategy="mean"),
@@ -350,13 +422,14 @@ def main():
         print(imp.sort_values(ascending=False).head(N_TOP_FEATURES).to_string())
 
     print("\nquestion text for top features:")
+    keymap = {short(q): q for q in questions}
+    all_keys = sorted(list(keymap) + list(qlabels), key=len, reverse=True)
     seen = set()
     for feat in top_feats:
-        key = feat.split("__")[0]
+        key = next((c for c in all_keys if feat.startswith(c + "__")), feat)
         if key not in seen:
             seen.add(key)
-            full = qlabels.get(
-                key, next((q for q in questions if short(q) == key), key))
+            full = qlabels.get(key, keymap.get(key, key))
             print(f"  {key:42} = {full}")
 
     print("\nunivariate correlation with match score (top 10 by |r|):")

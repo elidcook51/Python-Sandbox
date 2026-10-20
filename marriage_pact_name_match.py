@@ -20,8 +20,9 @@ OUT_CSV = "name_guesses.csv"
 
 # Anything at or above this difflib ratio counts as a probable match.
 THRESHOLD = 0.70
-# First names this similar (e.g. Aidan/Aiden) count as the same first name.
-FIRST_NAME_SIMILAR = 0.75
+# First-name fuzzy bar (first names are unique in this data, so this is
+# deliberately loose).
+FIRST_NAME_SIMILAR = 0.60
 # How many candidates to list per name in the console report.
 TOP_N = 3
 
@@ -60,16 +61,32 @@ def read_names(path, *col_keywords):
     return counts
 
 
+# Irregular nicknames that prefix/fuzzy matching can't catch (checked both
+# directions). First names are unique in this data, so this stays safe.
+NICKNAMES = {
+    "mike": "michael", "liz": "elizabeth", "beth": "elizabeth",
+    "bill": "william", "jim": "james", "bob": "robert",
+    "dave": "david", "kate": "katherine", "dick": "richard",
+    "peggy": "margaret", "sally": "sarah", "chuck": "charles",
+    "hank": "henry", "ned": "edward", "ted": "theodore",
+}
+
+
 def score_pair(a_norm, b_norm):
     if a_norm == b_norm:
         return 1.0, "exact"
     a_tok, b_tok = a_norm.split(), b_norm.split()
     if a_tok and b_tok:
-        # Same first name is enough for a match, spelling variants allowed
-        # (Aidan/Aiden); last names are ignored, flagged for review.
-        if a_tok[0] == b_tok[0]:
+        # First-name-only matching, deliberately loose: exact, prefix
+        # (Alex/Alexander), or fuzzy (Aidan/Aiden). Last names are ignored.
+        fa, fb = a_tok[0], b_tok[0]
+        if fa == fb:
             rule, score = "same-first-name", 0.95
-        elif difflib.SequenceMatcher(None, a_tok[0], b_tok[0]).ratio() >= FIRST_NAME_SIMILAR:
+        elif NICKNAMES.get(fa) == fb or NICKNAMES.get(fb) == fa:
+            rule, score = "first-name-nickname", 0.90
+        elif len(fa) >= 3 and len(fb) >= 3 and (fa.startswith(fb) or fb.startswith(fa)):
+            rule, score = "first-name-prefix", 0.90
+        elif difflib.SequenceMatcher(None, fa, fb).ratio() >= FIRST_NAME_SIMILAR:
             rule, score = "first-name-variant", 0.90
         else:
             rule = None

@@ -51,13 +51,16 @@ def bh_fdr(pvals):
 
 
 def question_of(feature, questions, qlabels):
-    key = feature.split("__")[0]
-    return qlabels.get(
-        key, next((q for q in questions if short(q) == key), key))
+    keymap = {short(q): q for q in questions}
+    keys = sorted(list(keymap) + list(qlabels), key=len, reverse=True)
+    for cand in keys:
+        if feature.startswith(cand + "__"):
+            return qlabels.get(cand, keymap.get(cand, cand))
+    return feature
 
 
 def main():
-    X, y, questions, kinds, qlabels = build_dataset(verbose=False)
+    X, y, questions, kinds, qlabels, _pair_info = build_dataset(verbose=False)
     model = make_pipeline(StandardScaler(), Ridge()).fit(X, y)
     print(f"ridge fit on {len(y)} pairs, {X.shape[1]} features")
 
