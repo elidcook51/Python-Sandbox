@@ -8,3 +8,4 @@ site_status
 *.pt
 *.joblib
 modelStorage
+*.csv
