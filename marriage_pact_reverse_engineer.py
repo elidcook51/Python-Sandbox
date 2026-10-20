@@ -11,6 +11,7 @@ Run:  python marriage_pact_reverse_engineer.py
 Needs: pip install pandas scikit-learn
 """
 
+import difflib
 import re
 import unicodedata
 from collections import Counter
@@ -31,6 +32,16 @@ TARGET_KEYWORD = "match perc"
 MAX_CATEGORIES = 6  # questions with more distinct answers get agree-only
 COMPACT_FEATURES = True  # categoricals get agree-only (no one-hots); best for small n
 N_TOP_FEATURES = 20
+
+# Dealbreaker columns for religion / political identity. None = auto-detect
+# by keywords (what it found is printed every run); set the exact header
+# string here if auto-detect picks the wrong column.
+RELIGION_SELF = None    # e.g. "What is your religious identity?"
+RELIGION_CARE = None    # e.g. "Do you care about a partner's religious identity?"
+RELIGION_AVOID = None   # e.g. "Which religions would you not want in a partner?"
+POLITICS_SELF = None
+POLITICS_CARE = None
+POLITICS_AVOID = "What political identity do you not want to be with"
 
 
 def normalize(name):
@@ -57,7 +68,130 @@ def is_likert(series):
     return bool(s.notna().all() and s.between(1, 7).all())
 
 
-def main():
+def detect_dealbreaker_cols(questions):
+    """Locate (self, care, avoid) columns for religion and politics.
+
+    Returns {"religion": (self, care, avoid), "politics": (self, care, avoid)};
+    any element may be None if not found.
+    """
+    def find(domain_key, role):
+        avoid_keys = ["not want", "don't want", "dont want", "avoid",
+                      "dealbreaker", "unacceptable", "rule out"]
+        out = []
+        for q in questions:
+            ql = q.lower()
+            if domain_key not in ql:
+                continue
+            is_avoid = any(k in ql for k in avoid_keys)
+            is_care = "care" in ql
+            if role == "avoid" and not is_avoid:
+                continue
+            if role == "care" and not is_care:
+                continue
+            if role == "self" and (is_avoid or is_care):
+                continue
+            out.append(q)
+        return out[0] if out else None
+
+    cfg = {
+        "religion": (RELIGION_SELF, RELIGION_CARE, RELIGION_AVOID),
+        "politics": (POLITICS_SELF, POLITICS_CARE, POLITICS_AVOID),
+    }
+    cols = {}
+    for domain, (s, c, a) in cfg.items():
+        key = "relig" if domain == "religion" else "polit"
+        triple = (s or find(key, "self"),
+                  c or find(key, "care"),
+                  a or find(key, "avoid"))
+        resolved = []
+        for val, role in zip(triple, ("self", "care", "avoid")):
+            r = resolve_col(val, questions)
+            if val and not r:
+                print(f"warning: configured {domain} {role} column {val!r} "
+                      f"not found; falling back to auto-detect")
+                r = resolve_col(find(key, role), questions)
+            resolved.append(r)
+        cols[domain] = tuple(resolved)
+    return cols
+
+
+def resolve_col(col, questions):
+    """Match a column name against the actual headers, forgiving case/?/spaces."""
+    if col is None:
+        return None
+    if col in questions:
+        return col
+    norm = {q.strip().lower().rstrip("?"): q for q in questions}
+    return norm.get(col.strip().lower().rstrip("?"))
+
+
+AVOID_EMPTY = {"", "nan", "none", "n/a", "no preference", "no preferences"}
+
+
+def parse_avoid_list(val):
+    return {p.strip().lower() for p in re.split(r"\s*(?:[;,]|\band\b)\s*", str(val))
+            if p.strip().lower() not in AVOID_EMPTY}
+
+
+def identity_matches(ident, avoid_set):
+    """Does this identity appear on the other's don't-want list?"""
+    ident = normalize(str(ident))
+    if not ident or not avoid_set or ident in AVOID_EMPTY:
+        return False
+    if ident in avoid_set:
+        return True
+    no_paren = re.sub(r"\s*\(.*?\)\s*", "", ident).strip()
+    for a in avoid_set:
+        a_np = re.sub(r"\s*\(.*?\)\s*", "", a).strip()
+        if no_paren and no_paren == a_np:
+            return True
+        if difflib.SequenceMatcher(None, ident, a).ratio() >= 0.88:
+            return True
+    return False
+
+
+def care_value(val):
+    s = str(val).strip().lower()
+    if s in ("yes", "y", "true", "1"):
+        return 1
+    if s in ("no", "n", "false", "0"):
+        return 0
+    try:
+        return float(s)  # likert 1-7 kept raw
+    except ValueError:
+        return 0
+
+
+def dealbreaker_features(ra, rb, db_cols):
+    """care_a, care_b + violation flags, for religion and politics."""
+    feats = {}
+    for prefix, (self_c, care_c, avoid_c) in db_cols.items():
+        if care_c:
+            feats[f"{prefix}__care_a"] = care_value(ra[care_c])
+            feats[f"{prefix}__care_b"] = care_value(rb[care_c])
+        if self_c and avoid_c:
+            feats[f"{prefix}__a_violates_b"] = int(
+                identity_matches(ra[self_c], parse_avoid_list(rb[avoid_c])))
+            feats[f"{prefix}__b_violates_a"] = int(
+                identity_matches(rb[self_c], parse_avoid_list(ra[avoid_c])))
+    return feats
+
+
+def dealbreaker_feature_names(db_cols):
+    names = []
+    for prefix, (self_c, care_c, avoid_c) in db_cols.items():
+        if care_c:
+            names += [f"{prefix}__care_a", f"{prefix}__care_b"]
+        if self_c and avoid_c:
+            names += [f"{prefix}__a_violates_b", f"{prefix}__b_violates_a"]
+    return names
+
+
+def build_dataset(verbose=True):
+    """Load answers.csv + matches.csv and build the pair-level feature matrix.
+
+    Returns (X, y, questions, kinds).
+    """
     answers = pd.read_csv(ANSWERS_CSV, encoding="utf-8-sig")
     matches = pd.read_csv(MATCHES_CSV, encoding="utf-8-sig")
 
@@ -93,12 +227,23 @@ def main():
     n_unique = {q: answers[q].astype(str).str.strip().str.lower().nunique()
                 for q in questions if kinds[q] == "categorical"}
     n_likert = sum(k == "likert" for k in kinds.values())
-    print(f"questions: {len(questions)} "
-          f"({n_likert} likert 1-7, {len(questions) - n_likert} categorical)")
+    if verbose:
+        print(f"questions: {len(questions)} "
+              f"({n_likert} likert 1-7, {len(questions) - n_likert} categorical)")
+
+    db_cols = detect_dealbreaker_cols(questions)
+    db_skip = set()
+    for prefix, (self_c, care_c, avoid_c) in db_cols.items():
+        db_skip.update(c for c in (care_c, avoid_c) if c)
+        if verbose and any((self_c, care_c, avoid_c)):
+            print(f"dealbreaker [{prefix}]: self={self_c!r} "
+                  f"care={care_c!r} avoid={avoid_c!r}")
 
     def pair_features(ra, rb):
         feats = {}
         for q in questions:
+            if q in db_skip:
+                continue
             k = short(q)
             if kinds[q] == "likert":
                 va = float(str(ra[q]).strip())
@@ -113,9 +258,10 @@ def main():
                 if not COMPACT_FEATURES and n_unique[q] <= MAX_CATEGORIES:
                     feats[f"{k}__a_{short(va, 18)}"] = 1
                     feats[f"{k}__b_{short(vb, 18)}"] = 1
+        feats.update(dealbreaker_features(ra, rb, db_cols))
         return feats
 
-    X_rows, y, skipped_names = [], [], []
+    X_rows, y, skipped_names, bad_targets = [], [], [], 0
     for _, m in matches.iterrows():
         raw_a, raw_b = m[your_col], m[their_col]
         ra, rb = lookup(raw_a), lookup(raw_b)
@@ -127,19 +273,37 @@ def main():
         try:
             target = float(str(m[target_col]).replace("%", "").strip())
         except ValueError:
-            skipped += 1
+            bad_targets += 1
             continue
         X_rows.append(pair_features(ra, rb))
         y.append(target)
 
     X = pd.DataFrame(X_rows).fillna(0)
     y = pd.Series(y)
-    print(f"pairs used: {len(y)} (skipped {len(skipped_names)} name lookups), "
-          f"features: {X.shape[1]}")
-    for n, c in Counter(skipped_names).most_common(10):
-        print(f"  no answers row for: {n!r} (x{c})")
+    if verbose:
+        print(f"pairs used: {len(y)} (skipped {len(skipped_names)} name lookups"
+              f"{f', {bad_targets} bad targets' if bad_targets else ''}), "
+              f"features: {X.shape[1]}")
+        for n, c in Counter(skipped_names).most_common(10):
+            print(f"  no answers row for: {n!r} (x{c})")
+        for prefix in ("religion", "politics"):
+            vcols = [c for c in X.columns
+                     if c.startswith(prefix + "__") and "violates" in c]
+            if vcols:
+                n_viol = int((X[vcols].sum(axis=1) > 0).sum())
+                print(f"pairs with a {prefix} dealbreaker violation: {n_viol}")
     if len(y) < 2:
         raise SystemExit("not enough matched pairs to train on")
+    qlabels = {}
+    if any(db_cols["religion"]):
+        qlabels["religion"] = "Religion (identity + dealbreakers)"
+    if any(db_cols["politics"]):
+        qlabels["politics"] = "Political identity (dealbreakers)"
+    return X, y, questions, kinds, qlabels
+
+
+def main():
+    X, y, questions, kinds, qlabels = build_dataset(verbose=True)
 
     models = {
         "mean_baseline": DummyRegressor(strategy="mean"),
@@ -179,11 +343,24 @@ def main():
         imp = pd.Series(abs(est.coef_.ravel()), index=X.columns)
     else:
         imp = None
+    top_feats = []
     if imp is not None:
+        top_feats = list(
+            imp.sort_values(ascending=False).head(N_TOP_FEATURES).index)
         print(imp.sort_values(ascending=False).head(N_TOP_FEATURES).to_string())
 
+    print("\nquestion text for top features:")
+    seen = set()
+    for feat in top_feats:
+        key = feat.split("__")[0]
+        if key not in seen:
+            seen.add(key)
+            full = qlabels.get(
+                key, next((q for q in questions if short(q) == key), key))
+            print(f"  {key:42} = {full}")
+
     print("\nunivariate correlation with match score (top 10 by |r|):")
-    corr = X.apply(lambda s: s.corr(y)).fillna(0)
+    corr = pd.Series({c: X[c].corr(y) for c in X.columns if X[c].std() > 0})
     top = corr.reindex(corr.abs().sort_values(ascending=False).index).head(10)
     print(top.to_string())
 

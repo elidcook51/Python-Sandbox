@@ -9,3 +9,5 @@ site_status
 *.joblib
 modelStorage
 *.csv
+*.txt
+*.png

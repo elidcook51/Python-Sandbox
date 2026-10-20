@@ -19,7 +19,9 @@ MATCHES_CSV = "matches.csv"
 OUT_CSV = "name_guesses.csv"
 
 # Anything at or above this difflib ratio counts as a probable match.
-THRESHOLD = 0.80
+THRESHOLD = 0.70
+# First names this similar (e.g. Aidan/Aiden) count as the same first name.
+FIRST_NAME_SIMILAR = 0.75
 # How many candidates to list per name in the console report.
 TOP_N = 3
 
@@ -63,11 +65,19 @@ def score_pair(a_norm, b_norm):
         return 1.0, "exact"
     a_tok, b_tok = a_norm.split(), b_norm.split()
     if a_tok and b_tok:
-        # "elid" vs "Eli Cook", any caps: first-name-only against full name
-        if len(a_tok) == 1 and a_tok[0] == b_tok[0]:
-            return 0.95, "first-name-subset"
-        if len(b_tok) == 1 and b_tok[0] == a_tok[0]:
-            return 0.95, "first-name-subset"
+        # Same first name is enough for a match, spelling variants allowed
+        # (Aidan/Aiden); last names are ignored, flagged for review.
+        if a_tok[0] == b_tok[0]:
+            rule, score = "same-first-name", 0.95
+        elif difflib.SequenceMatcher(None, a_tok[0], b_tok[0]).ratio() >= FIRST_NAME_SIMILAR:
+            rule, score = "first-name-variant", 0.90
+        else:
+            rule = None
+        if rule:
+            a_last, b_last = " ".join(a_tok[1:]), " ".join(b_tok[1:])
+            if a_last and b_last and a_last != b_last:
+                rule += "-last-differs"
+            return score, rule
     ratio = difflib.SequenceMatcher(None, a_norm, b_norm).ratio()
     return ratio, "fuzzy"
 
